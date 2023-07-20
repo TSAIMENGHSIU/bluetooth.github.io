@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+
+<head>
+  <title>Restraint Belt Web BLE</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.0/jquery.min.js"></script>
+  <!-- <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script> -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+
+
+  <script>
+
+    var _serv_uuid = '0000FFF0-0000-1000-8000-00805F9B34FB'.toLowerCase();
+    var _char_uuid = '0000FFF1-0000-1000-8000-00805F9B34FB'.toLowerCase();
+
+    var bluetoothDevice = null;
+    var connected = false;
+    var StatusValue;
+    var notified = false;
+    var myCharacteristic;
+    const Char1_data = new Uint16Array(2);
+
+    function log(v) {
+      var line = Array.prototype.slice.call(arguments).map(function (argument) {
+        return typeof argument === 'string' ? argument : JSON.stringify(argument);
+      }).join(' ');
+
+      document.querySelector('#log').textContent += line + '\n';
+      console.log(line);
+    }
+
+    function _connect() {
+      document.querySelector('#log').textContent = '';
+      log('Requesting any Bluetooth Device...');
+      navigator.bluetooth.requestDevice({
+         //filters: [...] <- Prefer filters to save energy & show relevant devices.
+        filters: [{name: 'aebBluetooth' }],
+        //acceptAllDevices : true
+        optionalServices: [_serv_uuid]
+      })
+        .then(device => {
+          log('Connecting to GATT Server...');
+          bluetoothDevice = device;
+          bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+          return device.gatt.connect();
+        })
+        .then(server => {
+          log('Getting Service...');
+          return server.getPrimaryService(_serv_uuid);
+        })
+        .then(service => {
+          log('Getting Characteristic...');
+          return service.getCharacteristic(_char_uuid);
+        })
+        .then(characteristic => {
+          //log('Reading Characteristic values...');
+          myCharacteristic = characteristic;
+          return characteristic.readValue();
+        })
+        .then(value => {
+          console.log(value);
+          let v1=value.getUint8(0);
+          let v2=value.getUint8(1);
+          let va=v1+v2*0x100;
+          Char1_data[0]=va;
+          let v3=value.getUint8(0);
+          let v4=value.getUint8(1);
+          let vt=v3+v4*0x100;
+          Char1_data[1]=vt;
+          $('input').attr('value', va);
+          log('Reading Characteristic values... Value is ' + va);
+          connected = true;
+          StatusValue = value.getUint8(0);
+          log('Starting notifications...');
+          return myCharacteristic.startNotifications();
+        })
+        .then(_ => {
+          document.querySelector('#notify').innerText = "Receiving";
+          document.querySelector('#notify').classList.add("disabled");
+          document.querySelector('#notify').classList.remove("btn-primary");
+          notified = true;
+          myCharacteristic.addEventListener('characteristicvaluechanged',
+            handleNotifications);
+          _update();
+          log('Ready!');
+        })
+        .catch(error => {
+          if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+            bluetoothDevice.gatt.disconnect();
+          }
+          bluetoothDevice = null;
+          connected = false;
+          log("Error:", error);
+          _update();
+        });
+
+    }
+
+    function onDisconnected(event) {
+      log("Disconnected by remote device!");
+      bluetoothDevice = null;
+      connected = false;
+      notified = false;
+      _update();
+    }
+
+    function _disconnect() {
+      log("_disconnect");
+      if (!connected) {
+        return;
+      }
+      log('Disconnecting from Bluetooth Device...');
+      if (bluetoothDevice.gatt.connected) {
+        bluetoothDevice.gatt.disconnect();
+      } else {
+        log('> Bluetooth Device is already disconnected');
+      }
+      _update();
+    }
+
+    function _toggle() {
+      if (!connected)
+        return;
+
+      StatusValue = StatusValue == 0 ? 1 : 0;
+      document.querySelector('#toggle').innerText = StatusValue;
+      if (StatusValue)
+        document.querySelector('#toggle').classList.add("btn-primary");
+      else
+        document.querySelector('#toggle').classList.remove("btn-primary");
+
+      _send();
+    }
+
+    function _send() {
+      if (!connected)
+        return;
+
+      var v = Uint8Array.of(7);
+      myCharacteristic.writeValue(v)
+        .then(_ => {
+          log('☜╮__ data transmitted, now value is ' + StatusValue);
+        })
+        .catch(error => {
+          log(error);
+        });
+    }
+
+    function _show() {
+      if (!connected)
+        return;
+
+      let v = Uint16Array.of(document.querySelector('#input').value);
+      Char1_data[0]=document.querySelector('#input').value;
+      let arrayBuf = new Uint16Array(v).buffer;
+      let arr2 = new Uint16Array(2);
+      arr2[0]=Char1_data[0];
+      console.log(arrayBuf);
+      myCharacteristic.writeValueWithResponse(arr2)
+        .then(_ => {
+          log('☜╮__ data transmitted, now value is ' + v);
+        })
+        .catch(error => {
+          console.log(error);
+          log(error);
+        });
+    }
+
+    function _read() {
+      if (!connected)
+        return;
+
+      myCharacteristic.readValue()
+        .then(value => {
+          value = value.buffer ? value : new DataView(value);
+          console.log(value); //value.getUint8(0)
+        })
+        .catch(error => {
+          console.log(error);
+          log(error);
+        });
+    }
+
+    function _notify() {
+      if (!connected)
+        return;
+
+      myCharacteristic.startNotifications()
+        .then(_ => {
+          log('notifications started');
+          document.querySelector('#notify').innerText = "Receiving";
+          document.querySelector('#notify').classList.add("disabled");
+          document.querySelector('#notify').classList.remove("btn-primary");
+          notified = true;
+          myCharacteristic.addEventListener('characteristicvaluechanged',
+            handleNotifications);
+        })
+        .catch(error => {
+          log(error);
+        });
+      _update();
+    }
+
+    function handleNotifications(event) {
+      let value = event.target.value;
+      // StatusValue = value.getUint8(0);
+      // document.querySelector('#toggle').innerText = StatusValue;
+      // if (StatusValue)
+      //   document.querySelector('#toggle').classList.add("btn-primary");
+      // else
+      //   document.querySelector('#toggle').classList.remove("btn-primary");
+      // log('__╭☞ data received, new value is ' + value.getUint8(0));
+      // console.log(value);
+      let v1=value.getUint8(0);
+      let v2=value.getUint8(1);
+      let va=v1+v2*0x100;
+      Char1_data[1]=va;
+      let temp = va *-0.3642+278.9179;
+      document.querySelector('#adc').innerText = temp.toFixed(1) + "度";
+      //document.querySelector('#adc').innerText = va.toFixed(1) + "壓力";
+      //document.querySelector('#adc').innerText = volt.toFixed(2) + "V";
+      // document.querySelector('#adc').classList.;
+      if(va<100)
+      {
+        document.querySelector('#adc').classList.remove("btn-info");
+        document.querySelector('#adc').classList.remove("btn-warning");
+        document.querySelector('#adc').classList.remove("btn-danger");
+        document.querySelector('#adc').classList.add("btn-success");
+      }
+      else if(va>=100 & va<200)
+      {
+        document.querySelector('#adc').classList.remove("btn-success");
+        document.querySelector('#adc').classList.remove("btn-warning");
+        document.querySelector('#adc').classList.remove("btn-danger");
+        document.querySelector('#adc').classList.add("btn-info");
+      }
+      else if(va>=200 & va<300)
+      {
+        document.querySelector('#adc').classList.remove("btn-success");
+        document.querySelector('#adc').classList.remove("btn-info");
+        document.querySelector('#adc').classList.remove("btn-danger");
+        document.querySelector('#adc').classList.add("btn-warning");
+      }
+      else
+      {
+        document.querySelector('#adc').classList.remove("btn-success");
+        document.querySelector('#adc').classList.remove("btn-info");
+        document.querySelector('#adc').classList.remove("btn-warning");
+        document.querySelector('#adc').classList.add("btn-danger");
+      }
+    }
+
+    function _update() {
+      if (!navigator.bluetooth) {
+        document.querySelector('#state').innerText = "Not supported!";
+        document.querySelector('#hint').innerText = "Hint: Web Bluetooth API is not available on current browser";
+        $("#install").hide();
+        document.querySelector('#connect').classList.add("disabled");
+        document.querySelector('#notify').classList.add("disabled");
+        $('input').attr('readonly', true);
+        document.querySelector('#show').classList.add("disabled");
+        document.querySelector('#read').classList.add("disabled");
+        document.querySelector('#adc').classList.add("disabled");
+        $("#toggle").hide();
+        // document.querySelector('#toggle').classList.add("disabled");
+        return;
+      }
+
+      if (connected) {
+        document.querySelector('#connect').onclick = _disconnect;
+        document.querySelector('#connect').innerText = "Disconnect";
+        document.querySelector('#connect').classList.remove("btn-primary");
+        $('input').attr('readonly', false);
+        // $('input').attr('value', '0810');
+        document.querySelector('#show').onclick = _show;
+        document.querySelector('#show').classList.remove("disabled");
+        document.querySelector('#show').classList.add("btn-primary");
+        document.querySelector('#read').onclick = _read;
+        document.querySelector('#read').classList.remove("disabled");
+        document.querySelector('#read').classList.add("btn-primary");
+        document.querySelector('#adc').classList.remove("disabled");
+        document.querySelector('#adc').classList.add("btn-info");
+        document.querySelector('#state').innerText = "Connected";
+        document.querySelector('#hint').innerText = "Hint: Press Send or Recive to communicate with BLE";
+        // document.querySelector('#toggle').innerText = StatusValue;
+        // document.querySelector('#toggle').classList.remove("disabled");
+        // if (StatusValue == 1)
+        //   document.querySelector('#toggle').classList.add("btn-primary");
+        // else
+        //   document.querySelector('#toggle').classList.remove("btn-primary");
+        // document.querySelector('#toggle').onclick = _toggle;
+      }
+      else {
+        $("#install").hide();
+        document.querySelector('#connect').onclick = _connect;
+        document.querySelector('#connect').innerText = "Connect";
+        document.querySelector('#connect').classList.add("btn-primary");
+        document.querySelector('#state').innerText = "Disconnected";
+        document.querySelector('#hint').innerText = "Hint: Press Connect to connect to BLE";
+        $("#toggle").hide();
+        // document.querySelector('#toggle').classList.add("disabled");
+        // document.querySelector('#toggle').innerText = "Value";
+        // document.querySelector('#toggle').classList.remove("btn-primary");
+        document.querySelector('#notify').classList.add("disabled");
+        document.querySelector('#notify').classList.remove("btn-primary");
+        document.querySelector('#notify').innerText = "Not Receiving";
+        $('input').attr('readonly', true);
+        $('input').attr('value', '');
+        document.querySelector('#show').classList.add("disabled");
+        document.querySelector('#show').classList.remove("btn-primary");
+        document.querySelector('#read').classList.add("disabled");
+        document.querySelector('#read').classList.remove("btn-primary");
+        document.querySelector('#adc').classList.add("disabled");
+        document.querySelector('#adc').classList.remove("btn-info");
+      }
+    }
+
+  </script>
+
+</head>
+
+<body onload='_update()'>
+
+  <div class="container">
+    <div class="page-header">
+      <!-- for Web Apk -->
+      <span id="connection"><abbr title="You are online!">&#128246;</abbr></span>
+      <script src="js/jquery.min.js"></script>
+      <script src="js/main.js"></script>
+      <h2>
+        
+        <br>
+        約束帶監測 Demo
+      </h2>
+    </div>
+    <div class="row">
+      <div class="col-sm-3">
+        <button id='connect' type="button" class="btn btn-lg btn-block">Connect</button>
+        <br>
+        <button id='notify' type="button" class="btn btn-lg btn-block">Not Recieving</button>
+        <br>
+        <button id='adc' type="button" class="btn btn-lg btn-block">體溫</button>
+        <br>
+        <button id='adc' type="button" class="btn btn-lg btn-block">壓力值</button>
+        <br>
+        <input  id="input" type="text" class="form-control" value=70 placeholder="輸入 40~99" readonly=true>
+        <br>
+        <button id='show' type="button" class="btn btn-lg btn-block">設定閥值</button>
+        <br>
+        <button id='read' type="button" class="btn btn-lg btn-block">Read</button>
+        <br>
+        <button id='toggle' type="button" class="btn btn-lg btn-block">Value</button>
+        <br>
+        <button id='install' type="button" class="btn btn-lg btn-outline-light btn-block">Install</button>
+        <!-- <br>
+        <button id='send' type="button" class="btn btn-block">Send</button> -->
+      </div>
+      <div class="col-sm-9">
+        <h4 id='state'></h4>
+        <div id='hint'></div>
+        <h4>Log:</h4>
+        <pre id='log'></pre>
+      </div>
+    </div>
+  </div>
+
+</body>
+
+</html>
