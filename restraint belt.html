@@ -1,1 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-tw">
+
+<head>
+  <title>Restraint Belt Web BLE</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.0/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script> -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/8.11.0/js/anychart-base.min.js"></script>
+
+  <style type="text/css">      
+    html, body, #container { 
+      width: 720; height: 480; margin: 0; padding: 0; 
+    } 
+  </style>
+
+
+  <script>
+
+    var _serv_uuid = '0000FFF0-0000-1000-8000-00805F9B34FB'.toLowerCase();
+    var _char_uuid = '0000FFF1-0000-1000-8000-00805F9B34FB'.toLowerCase();
+    var a=0,i=0,flag=0,s=0,N=256;
+    var bluetoothDevice = null;
+    var connected = false;
+    var StatusValue;
+    var notified = false;
+    var myCharacteristic;
+    const Char1_data = new Uint16Array(2);
+    const X = new Uint16Array(2);
+    var change_flag=0;
+    var maxLength = 150;
+
+    
+
+
+    function log(v) {
+      var line = Array.prototype.slice.call(arguments).map(function (argument) {
+        return typeof argument === 'string' ? argument : JSON.stringify(argument);
+      }).join(' ');
+
+      document.querySelector('#log').textContent += line + '\n';
+      console.log(line);
+    }
+    
+
+    function _connect() {
+      document.querySelector('#log').textContent = '';
+      log('Requesting any Bluetooth Device...');
+      navigator.bluetooth.requestDevice({ 
+        filters: [{ name: 'aebBluetooth' }],
+        optionalServices: [_serv_uuid]
+      })
+      
+      .then(device => {
+        bluetoothDevice = device;
+        log('Connecting to Device...');
+        return device.gatt.connect();
+      })
+      .then(server => {
+        log('Connected to Device1');
+
+        // 获取第一个设备的服务
+        return server.getPrimaryService(_serv_uuid);
+      })
+      .then(service => {
+        log('Getting characteristics of Device1...');
+        
+        // 获取第一个设备的特征
+        return service.getCharacteristic(_char_uuid);
+      })
+      .then(characteristic => {
+        log('Got characteristic of Device');
+        myCharacteristic = characteristic;
+        connected = true; 
+        _update();
+        log('Connected and got characteristic of Device');
+      // 在這裡可以對設備的特徵進行進一步操作
+    })
+    .catch(error => {
+      console.error('Error occurred:', error);
+      connected = false;
+    });  
+    }
+
+    function onDisconnected(event) {
+      log("Disconnected by remote device!");
+      bluetoothDevice = null;
+      connected = false;
+      notified = false;
+      _update();
+    }
+
+    function _disconnect() {
+      log("_disconnect");
+      if (!connected) {
+        return;
+      }
+      log('Disconnecting from Bluetooth Device...');
+      if (bluetoothDevice.gatt.connected) {
+        bluetoothDevice.gatt.disconnect();
+      } else {
+        log('> Bluetooth Device is already disconnected');
+      }
+      connected = false;
+      _update();
+    }
+
+    function _toggle() {
+      if (!connected)
+        return;
+
+      StatusValue = StatusValue == 0 ? 1 : 0;
+      document.querySelector('#toggle').innerText = StatusValue;
+      if (StatusValue)
+        document.querySelector('#toggle').classList.add("btn-primary");
+      else
+        document.querySelector('#toggle').classList.remove("btn-primary");
+
+      _send();
+    }
+
+    function _send() {
+      if (!connected)
+        return;
+
+      var v = Uint8Array.of(7);
+      myCharacteristic.writeValue(v)
+        .then(_ => {
+          log('☜╮__ data transmitted, now value is ' + StatusValue);
+        })
+        .catch(error => {
+          log(error);
+        });
+    }
+
+    function _show() {
+      if (!connected)
+        return;
+
+      let v = Uint16Array.of(document.querySelector('#input').value);
+      Char1_data[0]=document.querySelector('#input').value;
+      let arrayBuf = new Uint16Array(v).buffer;
+      let arr2 = new Uint16Array(2);
+      arr2[0]=Char1_data[0];
+      console.log(arrayBuf);
+      myCharacteristic.writeValueWithResponse(arr2)
+        .then(_ => {
+          log('☜╮__ data transmitted, now value is ' + v);
+        })
+        .catch(error => {
+          console.log(error);
+          log(error);
+        });
+    }
+
+    function _read() {
+      if (!connected)
+        return;
+        flag=flag^1;
+        if (flag==1)
+        {
+        myCharacteristic.startNotifications()
+        .then(_ => {
+        notified = true;
+        myCharacteristic.addEventListener('characteristicvaluechanged',
+        handleNotifications);
+        })
+
+        _update();
+        }
+        else
+        {
+        myCharacteristic.stopNotifications()
+        .then(_ => {
+        myCharacteristic.removeEventListener('characteristicvaluechanged',
+        handleNotifications);
+        })
+
+        _update();
+        }
+    }
+
+
+    function _save()
+    {
+      log('OK');
+      var dataToSave = {
+        datasets: chart2.data.datasets.map(dataset => ({
+          label: dataset.label,
+          data: dataset.data
+        }))
+    };
+
+
+    var jsonData = JSON.stringify(dataToSave);
+
+    // 创建一个Blob对象
+    var blob = new Blob([jsonData], { type: 'application/json' });
+
+    // 创建一个下载链接
+    var downloadLink = document.createElement('a');
+    downloadLink.href = URL.createObjectURL(blob);
+    downloadLink.download = 'data.json'; // 下载的文件名
+
+    // 模拟点击下载链接
+    downloadLink.click();
+
+
+    }
+
+    function _update() {
+      if (!navigator.bluetooth) {
+        document.querySelector('#state').innerText = "Not supported!";
+        document.querySelector('#hint').innerText = "Hint: Web Bluetooth API is not available on current browser";
+        $("#install").hide();
+        document.querySelector('#connect').classList.add("disabled");
+        document.querySelector('#notify').classList.add("disabled");
+        $('input').attr('readonly', true);
+        document.querySelector('#show').classList.add("disabled");
+        document.querySelector('#read').classList.add("disabled");
+        document.querySelector('#save').classList.add("disabled");
+        document.querySelector('#adc').classList.add("disabled");
+        $("#toggle").hide();
+        // document.querySelector('#toggle').classList.add("disabled");
+        return;
+      }
+
+      if (connected ) {
+        document.querySelector('#connect').onclick = _disconnect;
+        document.querySelector('#connect').innerText = "Disconnect";
+        document.querySelector('#connect').classList.remove("btn-primary");
+        document.querySelector('#read').onclick = _read;
+        document.querySelector('#read').classList.remove("disabled");
+        document.querySelector('#read').classList.add("btn-primary");
+        document.querySelector('#save').onclick = _save;
+        document.querySelector('#save').classList.remove("disabled");
+        document.querySelector('#save').classList.add("btn-primary");
+        document.querySelector('#state').innerText = "Connected";
+        document.querySelector('#hint').innerText = "1";
+
+      }
+      else {
+        $("#install").hide();
+        document.querySelector('#connect').onclick = _connect;
+        document.querySelector('#connect').innerText = "Connect";
+        document.querySelector('#connect').classList.add("btn-primary");
+        document.querySelector('#state').innerText = "Disconnected";
+        document.querySelector('#hint').innerText = "0";
+        document.querySelector('#read').classList.add("disabled");
+        document.querySelector('#save').classList.add("disabled");
+        $("#toggle").hide();
+      }
+    }
+    // RING buffer
+    let vo1 = 0; // blue
+    let a1 = 110000; 
+    let ringBuffer = [];
+    let bufferSize = 10;
+    let bufferInterval = 10; // 每10秒進行一次
+    let bufferCounter = 0;
+    let newdata = [];
+    let threadhold = 0;
+    let RingCounter=0;
+
+    let vo2 = 0; //green
+    let a2 = 110000; 
+    let ringBuffer1 = [];
+    let bufferSize1 = 10;
+    let bufferInterval1 = 10; // 每10秒進行一次
+    let bufferCounter1 = 0;
+    let newdata1 = [];
+    let threadhold1 = 0;
+    let RingCounter1=0;
+
+    let imgElement = document.getElementById("myImage");
+    imgElement.src = "https://i.imgur.com/7MZUeKs.png";
+    
+    
+
+    function handleNotifications(event) {
+        if (!connected )
+        return;
+        myCharacteristic .readValue()
+        .then(value => {
+          value = value.buffer ? value : new DataView(value); //value 
+          //realvalue=value.getUint16(0)
+          //realvalue2=value.getUint8(4)+value.getUint8(5)*256 +value.getUint8(6)*65536;
+          let v1=value.getUint8(0);
+          let v2=value.getUint8(1);
+          let va=v1+v2*0x100;
+          Char1_data[1]=va;
+          let temp = -0.8504*va +539.5889
+          temp = temp+3
+          //let temp = va
+          document.querySelector('#adc').innerText = temp.toFixed(1) + "度";
+
+        if (temp < 35) {
+            // 溫度低於25度時，彈出小視窗
+            //showCustomDialog();
+        }
+        if (temp > 37.5) {
+            // 溫度高於37.5度時，彈出小視窗
+            //showCustomDialog_1();
+        }
+        realvalue3 = value.getUint16(4) + value.getUint8(10)*65536;
+        realvalue4 = value.getUint8(12) + value.getUint8(13)*256 + value.getUint8(14)*65536;
+        })
+        
+        
+        // 計算realvalue3前5個值的平均當作初始值
+        if (newdata.length < 5) {
+                newdata.push(realvalue3);
+            }
+        if (newdata.length === 5) {
+            let sum1 = newdata.reduce((a, b) => a + b, 0);
+            let avg1 = sum1 / newdata.length;
+            vo1 = avg1; 
+        }
+
+        // 計算realvalue4前5個值的平均當作初始值
+        if (newdata1.length < 5) {
+            newdata1.push(realvalue4);
+        }
+        if (newdata1.length === 5) {
+            let sum2 = newdata1.reduce((a, b) => a + b, 0);
+            let avg2 = sum2 / newdata1.length;
+            vo2 = avg2; 
+        }
+        
+
+        // 檢查並更新ring
+         if (++bufferCounter1 >= bufferInterval1) {
+            ringBuffer1.push(realvalue3);  // 以 realvalue3 更新資料結構
+            // ringBuffer1[RingCounter]=realvalue3;
+            /*
+            for (bufferCounter = 0,vo1=0; bufferCounter < bufferSize ;bufferCounter++)
+              vo1+=ringBuffer1[bufferCounter];
+            vo1/=bufferSize;
+            */
+            let vh = vo1 + a1;  // 計算上限
+            let vl = vo1 - a1;  // 計算下限
+
+            if (realvalue3 > vh || realvalue3 < vl) {
+                showCustomDialog_2();
+                playSound();
+                vibrateDevice();
+              }
+              /*
+            for(bufferCounter = 0,threadhold=0; bufferCounter < bufferSize ;bufferCounter++)
+            {
+              if (ringBuffer1[bufferCounter] > vh || ringBuffer1[bufferCounter] < vl) {
+                threadhold++;
+              }
+              if(threadhold>=1)
+              {
+                showCustomDialog_2();
+                playSound();
+                vibrateDevice();
+                break;
+              }
+            }
+            */
+            
+
+            if (ringBuffer1.length > bufferSize1) {
+                ringBuffer1.shift();
+            }
+            // if(RingCounter++>=bufferSize)
+            //   RingCounter=0;
+
+            // bufferCounter1 = 0; 
+        }
+
+         // 檢查並更新ring
+         if (++bufferCounter >= bufferInterval) {
+            ringBuffer.push(realvalue4);  // 以 realvalue4 更新ring
+            // ringBuffer[RingCounter1]=realvalue4;
+            /*
+            for (bufferCounter = 0,vo2=0; bufferCounter < bufferSize ;bufferCounter++)
+              vo2+=ringBuffer[bufferCounter];
+            vo2/=bufferSize;
+            */
+            let vh1 = vo2 + a2;  // 計算上限
+            let v2 = vo2 - a2;  // 計算下限
+            
+            if (realvalue4 > vh1 || realvalue4 < v2) {
+                showCustomDialog_3();
+                playSound();
+                vibrateDevice();
+              }
+              /*
+            for(bufferCounter = 0,threadhold1=0; bufferCounter < bufferSize ;bufferCounter++)
+            {
+              if (ringBuffer[bufferCounter] > vh1 || ringBuffer[bufferCounter] < v2) {
+                threadhold1++;
+              }
+              if(threadhold1>=1)
+              {
+                showCustomDialog_3();
+                playSound();
+                vibrateDevice();
+                break;
+              }
+            }*/
+            if (ringBuffer.length > bufferSize) {
+                ringBuffer.shift();
+            }
+            // if(RingCounter1++>=bufferSize)
+            //   RingCounter1=0;
+            // bufferCounter = 0;  
+        }
+
+
+        const adcButton = document.getElementById('adc');
+        const temp = parseFloat(document.getElementById('adc').innerText);
+
+        //if(temp>=36 & temp<37.2) // 人類的平均體溫為36.5℃~37.2℃(腋下體溫)
+        if(temp>=36 && temp<=37.2)
+        {
+          document.querySelector('#adc').classList.remove("btn-info");
+          document.querySelector('#adc').classList.remove("btn-warning");
+          document.querySelector('#adc').classList.remove("btn-danger");
+          document.querySelector('#adc').classList.add("btn-success");
+        }
+        else
+        {
+          document.querySelector('#adc').classList.remove("btn-success");
+          document.querySelector('#adc').classList.remove("btn-info");
+          document.querySelector('#adc').classList.remove("btn-warning");
+          document.querySelector('#adc').classList.add("btn-danger");
+        }
+
+        s++;
+        //畫圖
+        chart2.data.labels.push('');
+        chart2.data.datasets[0].data.push(realvalue3);
+        chart2.data.datasets[1].data.push(realvalue4);
+        chart2.update();
+        
+        if (s % 125 == 0) {
+        //judgeData(); 
+        s=0;
+        }
+        
+        if (chart2.data.labels.length > maxLength) {
+            chart2.data.labels.shift();
+            for (var i = 0; i < chart2.data.datasets.length; i++) {
+                chart2.data.datasets[i].data.shift();
+            }
+        }
+
+    }
+     
+
+
+
+    function showCustomDialog() {
+        // 獲取自定義的彈出視窗元素
+        var dialog = document.getElementById("customDialog");
+
+        // 設置彈出視窗中的內容，例如：壓力過低的提示信息
+        dialog.innerHTML = "<p>溫度過低！</p>";
+
+        // 顯示彈出視窗
+        dialog.style.display = "block";
+
+        // 設置關閉按鈕的點擊事件處理函式
+        var closeBtn = document.createElement("button");
+        closeBtn.innerText = "關閉";
+        closeBtn.onclick = function () {
+            dialog.style.display = "none";
+        };
+        dialog.appendChild(closeBtn);
+    }
+
+    function showCustomDialog_1() {
+        // 獲取自定義的彈出視窗元素
+        var dialog = document.getElementById("customDialog");
+
+        // 設置彈出視窗中的內容，例如：壓力過低的提示信息
+        dialog.innerHTML = "<p>溫度過高！</p>";
+        // 顯示彈出視窗
+        dialog.style.display = "block";
+
+        // 設置關閉按鈕的點擊事件處理函式
+        var closeBtn = document.createElement("button");
+        var dialog = document.getElementById("customDialog");
+        closeBtn.innerText = "關閉";
+        closeBtn.onclick = function () {
+            dialog.style.display = "none";
+        };
+        dialog.appendChild(closeBtn);
+    }
+
+    function showCustomDialog_2() {
+        // 獲取自定義的彈出視窗元素
+        var dialog = document.getElementById("customDialog");
+        var imgElement = document.getElementById("myImage");
+        imgElement.src = "https://i.imgur.com/7MZUeKs.png";
+
+         // 設定圖片的尺寸
+        imgElement.style.width = "50px";
+        imgElement.style.height = "50px";
+
+        // 設置彈出視窗中的內容
+        dialog.innerHTML = "<p>病患躁動!病患躁動!病患躁動!</p>";
+         // 將圖片元素添加到對話框
+        dialog.appendChild(imgElement);
+        // 顯示彈出視窗
+        dialog.style.display = "block";
+
+        // 設置關閉按鈕的點擊事件處理函式
+        var closeBtn = document.createElement("button");
+        closeBtn.innerText = "關閉";
+        closeBtn.onclick = function () {
+            dialog.style.display = "none";
+        };
+        dialog.appendChild(closeBtn);
+    }
+
+    window.onload = function() {
+        checkTemperature();
+    };
+
+    function showCustomDialog_3() {
+        // 獲取自定義的彈出視窗元素
+        var dialog = document.getElementById("customDialog");
+        var imgElement = document.getElementById("myImage");
+        imgElement.src = "https://i.imgur.com/7MZUeKs.png";
+         // 設定圖片的尺寸
+        imgElement.style.width = "50px";
+        imgElement.style.height = "50px";
+
+        // 設置彈出視窗中的內容
+        dialog.innerHTML = "<p>病患躁動!病患躁動!病患躁動!</p>";
+        // 將圖片元素添加到對話框
+        dialog.appendChild(imgElement);
+
+        // 顯示彈出視窗
+        dialog.style.display = "block";
+
+        // 設置關閉按鈕的點擊事件處理函式
+        var closeBtn = document.createElement("button");
+        closeBtn.innerText = "關閉";
+        closeBtn.onclick = function () {
+            dialog.style.display = "none";
+        };
+        dialog.appendChild(closeBtn);
+    }
+
+    window.onload = function() {
+        showCustomDialog_2();
+        showCustomDialog_3();
+        checkTemperature();
+    };
+
+    function playSound() {
+        // 新的Audio对象
+        var audio = new Audio("https://raw.githubusercontent.com/TSAIMENGHSIU/music/main/123.mp3");
+        
+        
+        // 播放
+        audio.play();
+        // 定时器，在3秒后停止播放
+        setTimeout(function() {
+            audio.pause();
+            audio.currentTime = 0;
+        }, 3000);
+    }
+
+    function vibrateDevice() {
+        // 振动1000毫秒（1秒）
+        navigator.vibrate(3000);
+    }
+
+
+  </script>
+
+</head>
+<body onload='_update()'> 
+  <div class="container">
+    <div class="page-header">
+      <!-- for Web Apk -->
+      <span id="connection"><abbr title="You are online!">&#128246;</abbr></span>
+      <script src="js/jquery.min.js"></script>
+      <script src="js/main.js"></script>
+      <h2>
+        
+        <br>
+        約束帶監測 Demo
+        <div class="page-header">
+        </div>
+        <div class="col-sm-9">
+        <canvas id="chart2" width="720" height="480"></canvas>
+          <script>
+            // 创建一个Chart实例
+            var ctx2 = document.getElementById('chart2').getContext('2d');
+            var chart2 = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: [], // X轴标签，可根据需要进行设置
+                    datasets: [
+                        {
+                            label: 'Vibration 1',
+                            borderColor: 'blue',
+                            backgroundColor: 'transparent',
+                            data: []
+                        },
+                        {
+                            label: 'Vibration 2',
+                            borderColor: 'green',
+                            backgroundColor: 'transparent',
+                            data: []
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    animation: {
+                      duration: 0 // 将动画持续时间设置为0，禁用动画效果
+                    },
+                    scales: {
+                        x: {
+                            //type: 'time', // 將 X 軸設定為線性刻度，而不是時間刻度
+                            position: 'bottom', // X 軸放在底部
+                            ticks: {
+                                stepSize: 10, // 設定刻度間隔為1秒
+                                callback: function(value, index, values) {
+                                    return value ; // 在刻度上顯示秒數
+                                }
+                            }
+                        },
+                        y: {
+                            //beginAtZero: true,
+                            suggestedMin: 6000000, // 设置Y轴的最小值
+                            suggestedMax: 7000000 // 设置Y轴的最大值*/
+                        }
+                    
+                    }
+                }
+            });
+    </script>
+    </div>
+    <div class="row">
+      <div class="col-sm-3">
+        <button id='connect' type="button" class="btn btn-lg btn-block">Connect</button>
+        <br>
+        <button id='read' type="button" class="btn btn-lg btn-block">Read</button>
+        <br>
+        <button id='adc' type="button" class="btn btn-lg btn-block">體溫</button>
+        <br>
+        <img id="myImage" />
+        <br>
+        <!--
+        <button id='adc' type="button" class="btn btn-lg btn-block">躁動度</button>
+        <br>-->
+        <button id='save' type="button" class="btn btn-lg btn-block">save</button>
+        <br>
+        <!--
+        <button onclick="showPopup()">彈出小視窗</button>
+        <br>-->
+        <button id='toggle' type="button" class="btn btn-lg btn-block">Value</button>
+        <br>
+        <button id='install' type="button" class="btn btn-lg btn-outline-light btn-block">Install</button>
+      </div>
+
+      <div class="col-sm-12">
+        <h4 id='state'></h4>
+        <div id='hint'></div>
+        <h4>Log:</h4>
+        <pre id='log'></pre>
+      </div>
+    </div>
+ </div>
+</body>
+<head>
+    <title>體溫異常</title>
+    <style>
+        /* 在這裡定義CSS樣式 */
+        #customDialog {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 50px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <!-- 在這裡放置HTML內容 -->
+    <div id="customDialog" title="基本的對話框">
+        <p>
+
+        </p>
+    </div>
+    <div class="row">
+        <!-- 其他HTML元素... -->
+    </div>
+</body>
+
+
+</html>
+
+
+
+
+
+
 
